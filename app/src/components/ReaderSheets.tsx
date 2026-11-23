@@ -171,7 +171,7 @@ function GrammarRow({ g, ctx }: { g: GrammarInfo; ctx: Ctx }) {
   )
 }
 
-export function SentenceSheet(props: Ctx & { onListen: () => void }) {
+export function SentenceSheet(props: Ctx & { onListen: () => void; onBookmark: () => void; bookmarked: boolean }) {
   const { analysis, pending, lang, sentence } = props
   const settings = useSettings()
   const [showAll, setShowAll] = useState(false)
@@ -190,9 +190,14 @@ export function SentenceSheet(props: Ctx & { onListen: () => void }) {
       <p className="orig" lang={lang === 'ja' ? 'ja' : 'zh-CN'}>
         {sentence}
       </p>
-      <button className="btn ghost listen-btn" onClick={props.onListen}>
-        <Icon name="headphones" size={18} /> 从这句开始听
-      </button>
+      <div className="sentence-actions">
+        <button className="btn ghost listen-btn" onClick={props.onListen}>
+          <Icon name="headphones" size={18} /> 从这句开始听
+        </button>
+        <button className={`btn ghost listen-btn ${props.bookmarked ? 'on' : ''}`} onClick={props.onBookmark}>
+          <Icon name="bookmark" size={18} filled={props.bookmarked} /> {props.bookmarked ? '已加书签' : '加书签'}
+        </button>
+      </div>
       {analysis ? (
         <>
           <div className="label">{lang === 'ja' ? '中文翻译' : '日语翻译'}</div>

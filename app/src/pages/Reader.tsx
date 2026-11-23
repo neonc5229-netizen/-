@@ -48,6 +48,7 @@ const SentenceView = memo(function SentenceView({
   selected,
   flash,
   speaking,
+  marked,
   tokReady,
 }: {
   lang: Lang
@@ -60,6 +61,7 @@ const SentenceView = memo(function SentenceView({
   selected: boolean
   flash: boolean
   speaking: boolean
+  marked: boolean
   tokReady: boolean
 }) {
   const chunks = useMemo(
@@ -70,7 +72,7 @@ const SentenceView = memo(function SentenceView({
   )
   return (
     <span
-      className={`sent ${selected ? 'selected' : ''} ${flash ? 'flash' : ''} ${speaking ? 'speaking' : ''} ${analysis ? 'ready' : ''}`}
+      className={`sent ${selected ? 'selected' : ''} ${flash ? 'flash' : ''} ${speaking ? 'speaking' : ''} ${marked ? 'marked' : ''} ${analysis ? 'ready' : ''}`}
       data-p={p}
       data-s={s}
     >
@@ -139,24 +141,68 @@ export default function Reader() {
   }, [])
 
   // Pick the starting page once the book is loaded (or when a jump target changes).
+  // Without a jump target, resume at the exact sentence where reading stopped last time.
   const bookLoaded = !!book
   const progressPara = book?.progressPara ?? 0
+  const progressSent = book?.progressSent ?? 0
   const initDone = useRef<string>('')
+  const scrollTo = useRef<{ p: number; s: number; how: 'top' | 'center' } | null>(null)
+  const [jumpTick, setJumpTick] = useState(0)
   useEffect(() => {
     if (!bookLoaded || !pages.length) return
     const sig = `${bookId}|${sp.toString()}`
     if (initDone.current === sig) return
     initDone.current = sig
-    const para = target ? target.p : progressPara
-    const idx = Math.max(0, pages.findIndex((pg) => para >= pg.start && para < pg.end))
+    const at = target ? { p: target.p, s: target.s ?? 0 } : { p: progressPara, s: progressSent }
+    const idx = Math.max(0, pages.findIndex((pg) => at.p >= pg.start && at.p < pg.end))
+    if (target ? target.s != null : at.p > 0 || at.s > 0) scrollTo.current = { ...at, how: target ? 'center' : 'top' }
     setPage(idx)
-  }, [bookLoaded, pages, target, progressPara, bookId, sp])
+    setJumpTick((t) => t + 1)
+    db.books.update(bookId, { openedAt: Date.now() })
+  }, [bookLoaded, pages, target, progressPara, progressSent, bookId, sp])
 
-  // Save reading progress.
+  // Save the reading position (sentence at the top of the screen) while scrolling.
+  const lastSaved = useRef('')
+  const savePosition = useCallback(
+    (p: number, s: number, end: number) => {
+      const sig = `${p}:${s}:${end}`
+      if (sig === lastSaved.current) return
+      lastSaved.current = sig
+      db.books.update(bookId, { progressPara: p, progressSent: s, progressEnd: end })
+    },
+    [bookId],
+  )
+  const topSentence = useCallback(() => {
+    const sents = articleRef.current?.querySelectorAll<HTMLElement>('.sent')
+    if (!sents?.length) return null
+    const headerH = document.querySelector('.topbar')?.getBoundingClientRect().bottom ?? 0
+    const viewBottom = window.innerHeight - (document.querySelector('.player-bar')?.getBoundingClientRect().height ?? 0)
+    let first: HTMLElement | null = null
+    let last: HTMLElement | null = null
+    for (const el of sents) {
+      const r = el.getBoundingClientRect()
+      if (r.bottom > headerH + 4 && !first) first = el
+      if (r.top < viewBottom) last = el
+    }
+    first ??= sents[0]
+    last ??= first
+    return { p: Number(first.dataset.p), s: Number(first.dataset.s), end: Number(last.dataset.p) }
+  }, [])
   useEffect(() => {
-    if (page == null || !pages[page]) return
-    db.books.update(bookId, { progressPara: pages[page].start, progressEnd: pages[page].end - 1, openedAt: Date.now() })
-  }, [page, pages, bookId])
+    let timer = 0
+    const onScroll = () => {
+      clearTimeout(timer)
+      timer = window.setTimeout(() => {
+        const t = topSentence()
+        if (t) savePosition(t.p, t.s, t.end)
+      }, 300)
+    }
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      clearTimeout(timer)
+      window.removeEventListener('scroll', onScroll)
+    }
+  }, [topSentence, savePosition])
 
   // Stop reading aloud when leaving the book.
   useEffect(() => () => player.close(), [])
@@ -179,7 +225,8 @@ export default function Reader() {
     if (!speakPos) return
     const el = articleRef.current?.querySelector(`.sent[data-p="${speakPos.p}"][data-s="${speakPos.s}"]`)
     el?.scrollIntoView({ block: 'center', behavior: 'smooth' })
-  }, [speakPos, page])
+    savePosition(speakPos.p, speakPos.s, speakPos.p)
+  }, [speakPos, page, savePosition])
 
   const pg = page != null ? pages[page] : undefined
   const pageParas = useMemo(() => (pg && paras ? paras.slice(pg.start, pg.end) : []), [pg, paras])
@@ -194,18 +241,44 @@ export default function Reader() {
     if (next && paras) ensureAnalyzed(lang, paras.slice(next.start, next.end).flatMap((p) => p.sentences))
   }, [lang, pageSentences, settings.apiKey, page, pages, paras])
 
-  // Scroll to top on page change, or to the jump target.
+  // On page change: scroll to the resume / jump position if it is on this page, else to the top.
   useLayoutEffect(() => {
-    if (page == null) return
-    if (target && target.s != null && pg && target.p >= pg.start && target.p < pg.end) {
-      const el = articleRef.current?.querySelector(`.sent[data-p="${target.p}"][data-s="${target.s}"]`)
+    if (page == null || !pg) return
+    const to = scrollTo.current
+    if (to && to.p >= pg.start && to.p < pg.end) {
+      scrollTo.current = null
+      const el = articleRef.current?.querySelector(`.sent[data-p="${to.p}"][data-s="${to.s}"]`)
       if (el) {
-        el.scrollIntoView({ block: 'center' })
+        if (to.how === 'center') el.scrollIntoView({ block: 'center' })
+        else {
+          const headerH = document.querySelector('.topbar')?.getBoundingClientRect().height ?? 0
+          window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - headerH - 12)
+        }
         return
       }
     }
     window.scrollTo(0, 0)
-  }, [page, pg, target, tokReady])
+    const t = topSentence()
+    if (t) savePosition(t.p, t.s, t.end)
+  }, [page, pg, topSentence, savePosition, jumpTick])
+
+  const jumpTo = (p: number, s: number) => {
+    const idx = pages.findIndex((x) => p >= x.start && p < x.end)
+    if (idx < 0) return
+    scrollTo.current = { p, s, how: 'center' }
+    setSel(null)
+    setPage(idx)
+    setJumpTick((t) => t + 1)
+  }
+
+  const bookmarks = useMemo(() => [...(book?.bookmarks ?? [])].sort((a, b) => a.p - b.p || a.s - b.s), [book?.bookmarks])
+  const isBookmarked = (p: number, s: number) => bookmarks.some((b) => b.p === p && b.s === s)
+  const toggleBookmark = (p: number, s: number) => {
+    const list = book?.bookmarks ?? []
+    const text = paras?.[p]?.sentences[s] ?? ''
+    const next = isBookmarked(p, s) ? list.filter((b) => !(b.p === p && b.s === s)) : [...list, { p, s, text, at: Date.now() }]
+    db.books.update(bookId, { bookmarks: next })
+  }
 
   const goPage = (d: number) => {
     if (page == null) return
@@ -355,6 +428,7 @@ export default function Reader() {
                   selectedChunk={sel?.kind === 'word' && sel.p === para.idx && sel.s === s ? sel.c : null}
                   flash={!!flashTarget && flashTarget.p === para.idx && flashTarget.s === s}
                   speaking={!!speakPos && speakPos.p === para.idx && speakPos.s === s}
+                  marked={isBookmarked(para.idx, s)}
                 />
               )
             })}
@@ -399,6 +473,8 @@ export default function Reader() {
             analysis={selAnalysis}
             pending={status.isPending(analysisKey(lang, selText))}
             error={status.errorOf(analysisKey(lang, selText))}
+            bookmarked={isBookmarked(sel.p, sel.s)}
+            onBookmark={() => toggleBookmark(sel.p, sel.s)}
             onListen={() => {
               player.open(book, paras, { p: sel.p, s: sel.s })
               player.seek({ p: sel.p, s: sel.s }, true)
@@ -435,6 +511,45 @@ export default function Reader() {
                 </option>
               ))}
             </select>
+          </div>
+          <div className="bookmark-section">
+            <div className="row">
+              <span>书签</span>
+              <button
+                className="btn ghost small-btn"
+                onClick={() => {
+                  const t = topSentence()
+                  if (t && !isBookmarked(t.p, t.s)) toggleBookmark(t.p, t.s)
+                }}
+              >
+                <Icon name="bookmark" size={16} /> 在当前位置加书签
+              </button>
+            </div>
+            {bookmarks.length === 0 ? (
+              <p className="muted small">还没有书签。也可以长按句子后点「加书签」。</p>
+            ) : (
+              <ul className="bookmark-list">
+                {bookmarks.map((b) => (
+                  <li key={`${b.p}-${b.s}`}>
+                    <button
+                      className="bookmark-jump"
+                      onClick={() => {
+                        setViewOpen(false)
+                        jumpTo(b.p, b.s)
+                      }}
+                    >
+                      <span className="bookmark-page">第 {pages.findIndex((x) => b.p >= x.start && b.p < x.end) + 1} 页</span>
+                      <span className="bookmark-text" lang={lang === 'ja' ? 'ja' : 'zh-CN'}>
+                        {b.text}
+                      </span>
+                    </button>
+                    <button className="icon-btn" aria-label="删除书签" onClick={() => toggleBookmark(b.p, b.s)}>
+                      <Icon name="close" size={16} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
           <button
             className="btn ghost block"
