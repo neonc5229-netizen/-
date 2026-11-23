@@ -1,11 +1,13 @@
 import { HashRouter, NavLink, Route, Routes, useLocation } from 'react-router-dom'
 import { Icon } from './components/ui'
+import ComparePage from './pages/ComparePage'
 import Favorites from './pages/Favorites'
 import Import from './pages/Import'
 import ItemPage from './pages/ItemPage'
 import Library from './pages/Library'
 import Reader from './pages/Reader'
 import Review from './pages/Review'
+import ReviewSession from './pages/ReviewSession'
 import SettingsPage from './pages/Settings'
 import { useSettings } from './lib/settings'
 
@@ -40,6 +42,8 @@ export default function App() {
           <Route path="/item/:type/:key" element={<ItemPage />} />
           <Route path="/favorites" element={<Favorites />} />
           <Route path="/review" element={<Review />} />
+          <Route path="/review/session" element={<ReviewSession />} />
+          <Route path="/compare/:id" element={<ComparePage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>
         <BottomNav />

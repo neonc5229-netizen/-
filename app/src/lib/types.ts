@@ -101,6 +101,39 @@ export interface Item {
   srs?: SrsState
 }
 
+export interface CompareWord {
+  word: string
+  reading: string
+  meaning: string
+  nuance: string
+  example: { ja: string; zh: string }
+}
+
+export interface CompareQuiz {
+  /** Japanese sentence with ＿＿ for the blank. */
+  sentence: string
+  /** Dictionary form of the correct word (one of the group's words). */
+  answer: string
+  /** The sentence with the correct (conjugated) word filled in. */
+  filled: string
+  translation: string
+  explain: string
+}
+
+/** A set of easily confused words (similar meaning and/or similar shape) for comparison review. */
+export interface CompareGroup {
+  /** Words joined by ・ in sorted order. */
+  id: string
+  theme: string
+  kind: string
+  words: CompareWord[]
+  keyPoints: string
+  quiz: CompareQuiz[]
+  model: string
+  createdAt: number
+  srs?: SrsState
+}
+
 export interface AudioClip {
   /** `${model}|${voice}|${text}` */
   key: string

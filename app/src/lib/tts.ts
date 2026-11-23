@@ -30,7 +30,7 @@ export const AI_VOICES: { id: string; label: string }[] = [
   { id: 'Fenrir', label: 'Fenrir · 男声，有力' },
 ]
 
-export const RATES = [0.8, 1, 1.2]
+export const RATES = [0.5, 0.8, 1, 1.2]
 
 const hasSpeakable = (t: string) => /[\p{L}\p{N}]/u.test(t)
 
@@ -152,6 +152,22 @@ export function getAiClip(text: string): Promise<Blob> {
   return p
 }
 
+/** The Japanese text to read for a sentence: itself, or (for Chinese books) its Japanese translation. */
+export async function japaneseTextFor(lang: Lang, sentence: string, isCancelled: () => boolean): Promise<string> {
+  if (lang === 'ja' || !hasSpeakable(sentence)) return sentence
+  const key = analysisKey(lang, sentence)
+  for (let i = 0; i < 240; i++) {
+    const a = await db.analyses.get(key)
+    if (a) return a.translation
+    if (i === 0) await ensureAnalyzed(lang, [sentence], { urgent: true, retry: true })
+    const err = getAnalysisError(key)
+    if (err && i > 0) throw new Error(err)
+    if (isCancelled()) return ''
+    await new Promise((r) => setTimeout(r, 500))
+  }
+  throw new Error('等待日语译文超时')
+}
+
 // A tiny silent WAV, played inside the user's tap so iOS lets the element play later on its own.
 const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA='
 
@@ -201,6 +217,7 @@ class Player {
 
   play() {
     if (!this.state.pos) return
+    stopOnce()
     if (!this.unlocked && getSettings().ttsEngine === 'ai') {
       const a = this.el()
       a.src = SILENT_WAV
@@ -266,21 +283,9 @@ class Player {
   }
 
   /** What to read for a sentence: the sentence itself, or the Japanese translation for Chinese books. */
-  private async textAt(pos: PlayerPos, tok?: number): Promise<string> {
+  private textAt(pos: PlayerPos, tok?: number): Promise<string> {
     const sentence = this.paras[pos.p]?.sentences[pos.s] ?? ''
-    if (this.lang === 'ja' || !hasSpeakable(sentence)) return sentence
-    const key = analysisKey(this.lang, sentence)
-    const lang = this.lang
-    for (let i = 0; i < 240; i++) {
-      const a = await db.analyses.get(key)
-      if (a) return a.translation
-      if (i === 0) await ensureAnalyzed(lang, [sentence], { urgent: true, retry: true })
-      const err = getAnalysisError(key)
-      if (err && i > 0) throw new Error(err)
-      if (tok != null && tok !== this.token) return ''
-      await new Promise((r) => setTimeout(r, 500))
-    }
-    throw new Error('等待日语译文超时')
+    return japaneseTextFor(this.lang, sentence, () => tok != null && tok !== this.token)
   }
 
   private prefetch(pos: PlayerPos) {
@@ -394,6 +399,90 @@ class Player {
 }
 
 export const player = new Player()
+
+// ---------- single sentence ----------
+
+export interface OnceState {
+  /** Id of the sentence being read (caller-defined), or null. */
+  key: string | null
+  loading: boolean
+  error: string
+}
+
+let once: OnceState = { key: null, loading: false, error: '' }
+const onceListeners = new Set<() => void>()
+let onceToken = 0
+let onceAudio: HTMLAudioElement | null = null
+
+function setOnce(patch: Partial<OnceState>) {
+  once = { ...once, ...patch }
+  onceListeners.forEach((l) => l())
+}
+
+export function useOnce() {
+  return useSyncExternalStore(
+    (l) => {
+      onceListeners.add(l)
+      return () => onceListeners.delete(l)
+    },
+    () => once,
+  )
+}
+
+export function stopOnce() {
+  onceToken++
+  if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel()
+  onceAudio?.pause()
+  if (once.key || once.loading) setOnce({ key: null, loading: false })
+}
+
+/** Reads one sentence aloud at the given rate (pauses continuous listening). Call from a tap. */
+export async function speakOnce(lang: Lang, sentence: string, key: string, rate: number) {
+  if (player.state.playing) player.pause()
+  stopOnce()
+  const tok = ++onceToken
+  const engine = getSettings().ttsEngine
+  if (engine === 'ai') {
+    // Unlock the element inside the tap so it may play after the network wait (iOS).
+    onceAudio ??= new Audio()
+    onceAudio.src = SILENT_WAV
+    onceAudio.play().catch(() => {})
+  }
+  setOnce({ key, loading: true, error: '' })
+  const cancelled = () => tok !== onceToken
+  try {
+    const text = await japaneseTextFor(lang, sentence, cancelled)
+    if (cancelled() || !hasSpeakable(text)) return
+    if (engine === 'ai') {
+      const blob = await getAiClip(text)
+      if (cancelled()) return
+      setOnce({ loading: false })
+      const a = onceAudio!
+      const url = URL.createObjectURL(blob)
+      try {
+        a.src = url
+        a.playbackRate = rate
+        a.preservesPitch = true
+        await new Promise<void>((resolve, reject) => {
+          a.onended = () => resolve()
+          a.onpause = () => resolve()
+          a.onerror = () => reject(new Error('音频播放失败'))
+          a.play().catch((e) => (cancelled() ? resolve() : reject(e)))
+        })
+      } finally {
+        a.onended = a.onpause = a.onerror = null
+        URL.revokeObjectURL(url)
+      }
+    } else {
+      setOnce({ loading: false })
+      await speakSystem(text, rate, cancelled)
+    }
+  } catch (e) {
+    if (!cancelled()) setOnce({ error: (e as Error).message })
+  } finally {
+    if (!cancelled()) setOnce({ key: null, loading: false })
+  }
+}
 
 export function usePlayer() {
   return useSyncExternalStore(player.subscribe, () => player.state)

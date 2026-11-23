@@ -5,9 +5,10 @@ import { ensureAnalyzed, reanalyze } from '../lib/analysis'
 import { db } from '../lib/db'
 import { addFavorite, itemId, removeFavoriteSource, sameSource, seedFromGrammar, seedFromWord, type ItemSeed } from '../lib/favorites'
 import { lookupWord } from '../lib/llm'
-import { useSettings } from '../lib/settings'
+import { saveSettings, useSettings } from '../lib/settings'
 import { jlptLevel } from '../lib/text'
 import { resolveWord, type Chunk } from '../lib/tokenize'
+import { RATES, speakOnce, stopOnce, useOnce } from '../lib/tts'
 import type { Analysis, GrammarInfo, Lang, Source, WordInfo } from '../lib/types'
 import { Icon, JlptBadge, Spinner } from './ui'
 
@@ -54,6 +55,33 @@ function StarButton({ seed, source }: { seed: ItemSeed; source: Source }) {
   )
 }
 
+/** Play / stop button for reading one sentence, with a speed picker. */
+function SpeakSentence({ lang, sentence, speakKey, compact }: { lang: Lang; sentence: string; speakKey: string; compact?: boolean }) {
+  const once = useOnce()
+  const settings = useSettings()
+  const active = once.key === speakKey
+  return (
+    <div className={`speak-row ${compact ? 'compact' : ''}`}>
+      <button
+        className={`btn ghost speak-btn ${active ? 'on' : ''}`}
+        onClick={() => (active ? stopOnce() : speakOnce(lang, sentence, speakKey, settings.sentenceRate))}
+      >
+        {active && once.loading ? <span className="spinner" /> : <Icon name={active ? 'pause' : 'play'} size={16} filled />}
+        {active ? '停止' : '朗读这句'}
+      </button>
+      {!compact && (
+        <div className="rate-chips" role="group" aria-label="单句语速">
+          {RATES.map((r) => (
+            <button key={r} className={settings.sentenceRate === r ? 'on' : ''} onClick={() => saveSettings({ sentenceRate: r })}>
+              {r}×
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function useItemNav() {
   const nav = useNavigate()
   return (seed: ItemSeed) => nav(`/item/${seed.type}/${encodeURIComponent(seed.key)}`, { state: seed })
@@ -70,7 +98,7 @@ function ErrorBox({ ctx }: { ctx: Ctx }) {
   )
 }
 
-export function WordSheet(props: Ctx & { chunk: Chunk; onShowSentence: () => void }) {
+export function WordSheet(props: Ctx & { chunk: Chunk; onShowSentence: () => void; speakKey: string }) {
   const { chunk, lang, sentence, analysis, pending } = props
   const settings = useSettings()
   const openItem = useItemNav()
@@ -142,6 +170,7 @@ export function WordSheet(props: Ctx & { chunk: Chunk; onShowSentence: () => voi
         ) : null}
       </div>
 
+      <SpeakSentence lang={lang} sentence={sentence} speakKey={props.speakKey} compact />
       <div className="sheet-actions">
         <button className="btn ghost" onClick={props.onShowSentence}>
           整句翻译与语法
@@ -171,7 +200,7 @@ function GrammarRow({ g, ctx }: { g: GrammarInfo; ctx: Ctx }) {
   )
 }
 
-export function SentenceSheet(props: Ctx & { onListen: () => void; onBookmark: () => void; bookmarked: boolean }) {
+export function SentenceSheet(props: Ctx & { onListen: () => void; onBookmark: () => void; bookmarked: boolean; speakKey: string }) {
   const { analysis, pending, lang, sentence } = props
   const settings = useSettings()
   const [showAll, setShowAll] = useState(false)
@@ -190,9 +219,10 @@ export function SentenceSheet(props: Ctx & { onListen: () => void; onBookmark: (
       <p className="orig" lang={lang === 'ja' ? 'ja' : 'zh-CN'}>
         {sentence}
       </p>
+      <SpeakSentence lang={lang} sentence={sentence} speakKey={props.speakKey} />
       <div className="sentence-actions">
         <button className="btn ghost listen-btn" onClick={props.onListen}>
-          <Icon name="headphones" size={18} /> 从这句开始听
+          <Icon name="headphones" size={18} /> 从这句开始连续听
         </button>
         <button className={`btn ghost listen-btn ${props.bookmarked ? 'on' : ''}`} onClick={props.onBookmark}>
           <Icon name="bookmark" size={18} filled={props.bookmarked} /> {props.bookmarked ? '已加书签' : '加书签'}

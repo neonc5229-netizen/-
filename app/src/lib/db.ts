@@ -1,5 +1,5 @@
 import Dexie, { type EntityTable } from 'dexie'
-import type { Analysis, AudioClip, Book, Detail, Item, Paragraph } from './types'
+import type { Analysis, AudioClip, Book, CompareGroup, Detail, Item, Paragraph } from './types'
 
 export const db = new Dexie('japanese-reader') as Dexie & {
   books: EntityTable<Book, 'id'>
@@ -8,6 +8,7 @@ export const db = new Dexie('japanese-reader') as Dexie & {
   items: EntityTable<Item, 'id'>
   details: EntityTable<Detail, 'id'>
   audio: EntityTable<AudioClip, 'key'>
+  groups: EntityTable<CompareGroup, 'id'>
 }
 
 db.version(1).stores({
@@ -20,6 +21,10 @@ db.version(1).stores({
 
 db.version(2).stores({
   audio: 'key, at',
+})
+
+db.version(3).stores({
+  groups: 'id, createdAt',
 })
 
 export async function deleteBook(bookId: number) {
@@ -39,13 +44,15 @@ export async function exportAll() {
     analyses: await db.analyses.toArray(),
     items: await db.items.toArray(),
     details: await db.details.toArray(),
+    groups: await db.groups.toArray(),
   }
 }
 
 export async function importAll(data: Awaited<ReturnType<typeof exportAll>>) {
   if (data?.app !== 'japanese-reader') throw new Error('不是本应用导出的备份文件')
-  await db.transaction('rw', [db.books, db.paragraphs, db.analyses, db.items, db.details], async () => {
-    await Promise.all([db.books.clear(), db.paragraphs.clear(), db.analyses.clear(), db.items.clear(), db.details.clear()])
+  await db.transaction('rw', [db.books, db.paragraphs, db.analyses, db.items, db.details, db.groups], async () => {
+    await Promise.all([db.books.clear(), db.paragraphs.clear(), db.analyses.clear(), db.items.clear(), db.details.clear(), db.groups.clear()])
+    await db.groups.bulkPut(data.groups ?? [])
     await db.books.bulkPut(data.books)
     await db.paragraphs.bulkPut(data.paragraphs)
     await db.analyses.bulkPut(data.analyses)
