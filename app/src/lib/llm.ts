@@ -217,6 +217,68 @@ examples给3-5个自然的例句。`
   return { detail: data as unknown as GrammarDetail, model }
 }
 
+// ---------- batch details (several items per request to save API cost) ----------
+
+const EXAMPLES = { type: 'array', items: obj({ ja: str, zh: str }) }
+const WORD_DETAIL = obj({
+  i: { type: 'integer' },
+  headword: str,
+  reading: str,
+  pos: str,
+  meanings: { type: 'array', items: obj({ meaning: str, note: str }) },
+  usage: str,
+  collocations: { type: 'array', items: str },
+  examples: EXAMPLES,
+  synonyms: { type: 'array', items: obj({ word: str, diff: str }) },
+})
+const GRAMMAR_DETAIL = obj({
+  i: { type: 'integer' },
+  pattern: str,
+  jlpt: str,
+  meaning: str,
+  connection: str,
+  usage: str,
+  nuance: str,
+  examples: EXAMPLES,
+  similar: { type: 'array', items: obj({ pattern: str, diff: str }) },
+})
+const batchSchema = (item: unknown): JsonSchema => ({
+  name: 'details',
+  strict: true,
+  schema: obj({ items: { type: 'array', items: item } }),
+})
+
+export type BatchQuality = 'fast' | 'deep'
+
+export async function wordDetailsBatch(words: { headword: string; reading?: string }[], quality: BatchQuality) {
+  const system = `你是面向中文母语者的日语词典编辑，用户水平N2-N1。为用户给出的每个日语词分别编写详细词条，按输入顺序输出JSON：
+{"items":[{"i":输入序号,"headword":"辞书形","reading":"平假名","pos":"词性","meanings":[{"meaning":"中文释义","note":"使用场合或补充"}],"usage":"用法说明（语体、搭配习惯、易错点）","collocations":["常见搭配"],"examples":[{"ja":"日语例句","zh":"中文翻译"}],"synonyms":[{"word":"近义词","diff":"与本词的区别"}]}]}
+每个词给3-4个自然的例句。`
+  const user = JSON.stringify(words.map((w, i) => ({ i, headword: w.headword, reading: w.reading ?? '' })))
+  const { data, model } = await ask(quality, system, user, 16000, batchSchema(WORD_DETAIL))
+  return { items: alignBatch(data.items, words.length) as (WordDetail | null)[], model }
+}
+
+export async function grammarDetailsBatch(patterns: string[], quality: BatchQuality) {
+  const system = `你是面向中文母语者的日语语法讲师，用户水平N2-N1。为用户给出的每个语法分别编写详细讲解，按输入顺序输出JSON：
+{"items":[{"i":输入序号,"pattern":"标准形式","jlpt":"N1-N5","meaning":"中文含义","connection":"接续方式","usage":"用法说明","nuance":"语感、语体与注意点","examples":[{"ja":"日语例句","zh":"中文翻译"}],"similar":[{"pattern":"近义语法","diff":"区别"}]}]}
+每个语法给3-4个自然的例句。`
+  const user = JSON.stringify(patterns.map((pattern, i) => ({ i, pattern })))
+  const { data, model } = await ask(quality, system, user, 16000, batchSchema(GRAMMAR_DETAIL))
+  return { items: alignBatch(data.items, patterns.length) as (GrammarDetail | null)[], model }
+}
+
+function alignBatch(raw: unknown, n: number) {
+  const out: (Record<string, unknown> | null)[] = Array(n).fill(null)
+  if (!Array.isArray(raw)) return out
+  raw.forEach((r, pos) => {
+    if (!r || typeof r !== 'object') return
+    const i = typeof r.i === 'number' && r.i >= 0 && r.i < n ? r.i : pos < n ? pos : -1
+    if (i >= 0 && !out[i]) out[i] = r
+  })
+  return out
+}
+
 export async function testConnection() {
   const { model } = await ask('fast', '只输出JSON：{"ok":true}', 'ping', 100)
   return model

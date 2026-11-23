@@ -10,8 +10,19 @@ export interface Book {
   charCount: number
   /** First paragraph of the page the reader was last on. */
   progressPara: number
-  /** Last paragraph of that page (for the progress bar). */
+  /** Sentence (within progressPara) at the top of the screen. */
+  progressSent?: number
+  /** Last paragraph read so far on screen (for the progress bar). */
   progressEnd?: number
+  bookmarks?: Bookmark[]
+}
+
+export interface Bookmark {
+  p: number
+  s: number
+  /** The sentence, for display. */
+  text: string
+  at: number
 }
 
 export interface Paragraph {
