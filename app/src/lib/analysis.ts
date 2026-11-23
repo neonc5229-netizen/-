@@ -31,6 +31,10 @@ export function useAnalysisStatus() {
   }
 }
 
+export function getAnalysisError(key: string) {
+  return status.get(key) === 'error' ? errors.get(key) : undefined
+}
+
 interface Job {
   lang: Lang
   sentences: string[]

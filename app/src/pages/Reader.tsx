@@ -1,12 +1,14 @@
 import { useLiveQuery } from 'dexie-react-hooks'
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import PlayerBar from '../components/PlayerBar'
 import { SentenceSheet, WordSheet } from '../components/ReaderSheets'
 import { Icon, PromptDialog, Sheet, Spinner, TopBar } from '../components/ui'
 import { analysisKey, ensureAnalyzed, useAnalyses, useAnalysisStatus } from '../lib/analysis'
 import { db } from '../lib/db'
 import { saveSettings, useSettings } from '../lib/settings'
 import { chunkSentence, furiganaParts, getTokenizer, loadTokenizer, type Chunk } from '../lib/tokenize'
+import { player, usePlayer } from '../lib/tts'
 import type { Analysis, Lang, Paragraph } from '../lib/types'
 
 const PAGE_CHARS = 900
@@ -45,6 +47,7 @@ const SentenceView = memo(function SentenceView({
   selectedChunk,
   selected,
   flash,
+  speaking,
   tokReady,
 }: {
   lang: Lang
@@ -56,6 +59,7 @@ const SentenceView = memo(function SentenceView({
   selectedChunk: number | null
   selected: boolean
   flash: boolean
+  speaking: boolean
   tokReady: boolean
 }) {
   const chunks = useMemo(
@@ -65,7 +69,11 @@ const SentenceView = memo(function SentenceView({
     [lang, text, analysis, tokReady],
   )
   return (
-    <span className={`sent ${selected ? 'selected' : ''} ${flash ? 'flash' : ''} ${analysis ? 'ready' : ''}`} data-p={p} data-s={s}>
+    <span
+      className={`sent ${selected ? 'selected' : ''} ${flash ? 'flash' : ''} ${speaking ? 'speaking' : ''} ${analysis ? 'ready' : ''}`}
+      data-p={p}
+      data-s={s}
+    >
       {chunks.map((c, i) =>
         c.punct ? (
           <span key={i}>{c.text}</span>
@@ -115,6 +123,7 @@ export default function Reader() {
   const [tokError, setTokError] = useState('')
   const articleRef = useRef<HTMLDivElement>(null)
   const status = useAnalysisStatus()
+  const playerState = usePlayer()
   const lang = book?.lang
 
   const target = useMemo(() => {
@@ -148,6 +157,29 @@ export default function Reader() {
     if (page == null || !pages[page]) return
     db.books.update(bookId, { progressPara: pages[page].start, progressEnd: pages[page].end - 1, openedAt: Date.now() })
   }, [page, pages, bookId])
+
+  // Stop reading aloud when leaving the book.
+  useEffect(() => () => player.close(), [])
+  useEffect(() => {
+    if (paras) player.updateParas(paras)
+  }, [paras])
+
+  // Follow the sentence being read: turn the page and keep it in view.
+  const speakPos = playerState.active ? playerState.pos : null
+  useEffect(() => {
+    if (!speakPos || !pages.length) return
+    const idx = pages.findIndex((pg) => speakPos.p >= pg.start && speakPos.p < pg.end)
+    if (idx >= 0 && idx !== page) {
+      setSel(null)
+      setPage(idx)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [speakPos, pages])
+  useEffect(() => {
+    if (!speakPos) return
+    const el = articleRef.current?.querySelector(`.sent[data-p="${speakPos.p}"][data-s="${speakPos.s}"]`)
+    el?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  }, [speakPos, page])
 
   const pg = page != null ? pages[page] : undefined
   const pageParas = useMemo(() => (pg && paras ? paras.slice(pg.start, pg.end) : []), [pg, paras])
@@ -199,6 +231,7 @@ export default function Reader() {
       fired: false,
       timer: window.setTimeout(() => {
         state.fired = true
+        if (player.state.playing) player.pause()
         navigator.vibrate?.(12)
         setSel({ kind: 'sent', p, s })
       }, 450),
@@ -222,6 +255,7 @@ export default function Reader() {
     }
     const p = Number(sentEl.dataset.p)
     const s = Number(sentEl.dataset.s)
+    if (player.state.playing) player.pause()
     setSel({ kind: 'word', p, s, c: Number(w.dataset.c) })
     if (lang && settings.apiKey) ensureAnalyzed(lang, [paras![p].sentences[s]], { urgent: true })
   }
@@ -254,15 +288,29 @@ export default function Reader() {
   const flashTarget = target && target.s != null ? target : null
 
   return (
-    <div className="page reader-page">
+    <div className={`page reader-page ${playerState.active ? 'with-player' : ''}`}>
       <TopBar
         title={book.title}
         onBack={() => nav('/')}
         onTitleClick={() => setRenaming(true)}
         right={
-          <button className="icon-btn text" onClick={() => setViewOpen(true)} aria-label="阅读设置">
-            Aa
-          </button>
+          <>
+            <button
+              className={`icon-btn ${playerState.active ? 'on' : ''}`}
+              aria-label="听书"
+              onClick={() => {
+                if (playerState.active) return player.close()
+                const start = sel ? { p: sel.p, s: sel.s } : { p: pg?.start ?? 0, s: 0 }
+                player.open(book, paras, start)
+                player.play()
+              }}
+            >
+              <Icon name="headphones" />
+            </button>
+            <button className="icon-btn text" onClick={() => setViewOpen(true)} aria-label="阅读设置">
+              Aa
+            </button>
+          </>
         }
       />
 
@@ -306,6 +354,7 @@ export default function Reader() {
                   selected={!!sel && sel.p === para.idx && sel.s === s}
                   selectedChunk={sel?.kind === 'word' && sel.p === para.idx && sel.s === s ? sel.c : null}
                   flash={!!flashTarget && flashTarget.p === para.idx && flashTarget.s === s}
+                  speaking={!!speakPos && speakPos.p === para.idx && speakPos.s === s}
                 />
               )
             })}
@@ -350,9 +399,16 @@ export default function Reader() {
             analysis={selAnalysis}
             pending={status.isPending(analysisKey(lang, selText))}
             error={status.errorOf(analysisKey(lang, selText))}
+            onListen={() => {
+              player.open(book, paras, { p: sel.p, s: sel.s })
+              player.seek({ p: sel.p, s: sel.s }, true)
+              setSel(null)
+            }}
           />
         )}
       </Sheet>
+
+      <PlayerBar />
 
       <Sheet open={viewOpen} onClose={() => setViewOpen(false)}>
         <div className="view-settings">
