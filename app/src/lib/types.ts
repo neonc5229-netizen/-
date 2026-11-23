@@ -1,0 +1,99 @@
+export type Lang = 'ja' | 'zh'
+
+export interface Book {
+  id?: number
+  title: string
+  lang: Lang
+  createdAt: number
+  openedAt: number
+  paraCount: number
+  charCount: number
+  /** First paragraph of the page the reader was last on. */
+  progressPara: number
+  /** Last paragraph of that page (for the progress bar). */
+  progressEnd?: number
+}
+
+export interface Paragraph {
+  id?: number
+  bookId: number
+  idx: number
+  sentences: string[]
+}
+
+export interface GrammarInfo {
+  pattern: string
+  jlpt?: string
+  meaning: string
+  explanation?: string
+}
+
+export interface WordInfo {
+  /** Text as it appears in the source sentence. */
+  surface: string
+  /** Japanese dictionary form (for Chinese sources: the corresponding Japanese word). */
+  lemma: string
+  reading: string
+  pos?: string
+  meaning: string
+}
+
+export interface Analysis {
+  /** `${lang}|${sentence}` */
+  key: string
+  lang: Lang
+  text: string
+  translation: string
+  grammar: GrammarInfo[]
+  words: WordInfo[]
+  model: string
+  at: number
+}
+
+export type ItemType = 'word' | 'grammar'
+
+export interface Source {
+  bookId: number
+  para: number
+  sent: number
+  lang: Lang
+  /** The sentence in the book. */
+  text: string
+  /** Its translation (Chinese for Japanese books, Japanese for Chinese books). */
+  translation?: string
+  /** The exact text that was tapped, for words. */
+  surface?: string
+  at: number
+}
+
+export interface SrsState {
+  due: number
+  stability: number
+  difficulty: number
+  reps: number
+  lapses: number
+  last?: number
+}
+
+export interface Item {
+  /** `${type}:${key}` */
+  id: string
+  type: ItemType
+  key: string
+  headword: string
+  reading?: string
+  meaning: string
+  jlpt?: string
+  pos?: string
+  sources: Source[]
+  createdAt: number
+  srs?: SrsState
+}
+
+export interface Detail {
+  /** `${type}:${key}` or `lookup:...` */
+  id: string
+  data: unknown
+  model: string
+  at: number
+}
