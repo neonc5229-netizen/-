@@ -279,6 +279,70 @@ function alignBatch(raw: unknown, n: number) {
   return out
 }
 
+// ---------- comparison groups ----------
+
+const COMPARE_SCHEMA: JsonSchema = {
+  name: 'groups',
+  strict: true,
+  schema: obj({
+    groups: {
+      type: 'array',
+      items: obj({
+        theme: str,
+        kind: str,
+        // Kept flat: the relay rejects schemas with objects nested this deep for Gemini.
+        words: { type: 'array', items: obj({ word: str, reading: str, meaning: str, nuance: str, example_ja: str, example_zh: str }) },
+        key_points: str,
+        quiz: { type: 'array', items: obj({ sentence: str, answer: str, filled: str, translation: str, explain: str }) },
+      }),
+    },
+  }),
+}
+
+export interface RawGroup {
+  theme: string
+  kind: string
+  words: { word: string; reading: string; meaning: string; nuance: string; example_ja: string; example_zh: string }[]
+  key_points: string
+  quiz: { sentence: string; answer: string; filled: string; translation: string; explain: string }[]
+}
+
+export async function compareGroups(words: { headword: string; meaning?: string }[], quality: BatchQuality) {
+  const system = `你是日语词汇辨析专家，面向中文母语的N2-N1学习者。用户给出一个或多个日语单词，为每个单词找出学习者容易混淆的一组词：
+- 意思相近的词（近义词），如 混ざる・混じる・交ざる・紛れる
+- 字形或读音相似的词（形近词，常见于同一汉字的不同动词），如 萎れる・萎びる・萎む・萎える；染みる・染める
+每组3-5个词，必须包含用户给出的那个词；如果用户给出的几个词本来就属于同一组，合并成一组。只输出JSON：
+{"groups":[{"theme":"本组的共同点（中文，一句话）","kind":"近义|形近|近义+形近","words":[{"word":"辞书形","reading":"平假名","meaning":"中文释义","nuance":"与组内其他词的区别要点（中文）","example_ja":"体现该词特点的例句","example_zh":"例句翻译"}],"key_points":"如何区分这组词的总结（中文，2-4句）","quiz":[{"sentence":"日语句子，要填的词用＿＿表示","answer":"正确的词的辞书形，必须是words中的一个","filled":"填入正确词（含活用变化）后的完整句子","translation":"句子的中文翻译","explain":"为什么选这个而不选其他词（中文）"}]}]}
+每组出5-6道填空题，尽量覆盖组内每个词，每题的正确答案必须唯一。
+务必准确：只收录真实存在的常用词，读音必须正确，同一个词不要重复出现；不确定的词宁可不收。`
+  const user = JSON.stringify(words.map((w) => ({ word: w.headword, meaning: w.meaning ?? '' })))
+  const { data, model } = await ask(quality, system, user, 16000, COMPARE_SCHEMA)
+  return { groups: (Array.isArray(data.groups) ? data.groups : []) as RawGroup[], model }
+}
+
+// ---------- sentence-writing grading ----------
+
+const GRADE_SCHEMA: JsonSchema = {
+  name: 'grade',
+  strict: true,
+  schema: obj({ ok: { type: 'boolean' }, score: { type: 'integer' }, corrected: str, comment: str }),
+}
+
+export interface WritingGrade {
+  ok: boolean
+  score: number
+  corrected: string
+  comment: string
+}
+
+export async function gradeSentence(target: { type: 'word' | 'grammar'; headword: string; meaning: string }, sentence: string) {
+  const system = `你是日语老师，批改中文母语学习者（N2-N1）的造句练习。判断学生是否正确、自然地使用了指定的${target.type === 'word' ? '单词' : '语法'}，只输出JSON：
+{"ok":是否基本正确,"score":1到5的整数（5=完全自然，4=正确但可更自然，3=有小错误，2=用法错误，1=没有使用或完全错误）,"corrected":"修改后的自然句子（若已完美则原样）","comment":"中文点评，指出错误和改进点，简洁"}`
+  const user = `目标${target.type === 'word' ? '单词' : '语法'}：${target.headword}（${target.meaning}）\n学生造句：${sentence}`
+  const { data } = await ask('fast', system, user, 2000, GRADE_SCHEMA)
+  return data as unknown as WritingGrade
+}
+
 export async function testConnection() {
   const { model } = await ask('fast', '只输出JSON：{"ok":true}', 'ping', 100)
   return model

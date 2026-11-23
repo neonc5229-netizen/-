@@ -2,6 +2,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { Icon, JlptBadge, Spinner, TopBar } from '../components/ui'
+import { generateGroupFor } from '../lib/compare'
 import { db } from '../lib/db'
 import { addFavorite, itemId, removeFavoriteSource, removeItem, type ItemSeed } from '../lib/favorites'
 import { grammarDetail, wordDetail, type GrammarDetail, type WordDetail } from '../lib/llm'
@@ -10,6 +11,51 @@ import type { ItemType, Source } from '../lib/types'
 
 /** Detail requests in flight, shared across mounts so a page is never generated twice at once. */
 const inflight = new Map<string, Promise<void>>()
+
+function CompareSection({ headword, meaning }: { headword: string; meaning: string }) {
+  const nav = useNavigate()
+  const settings = useSettings()
+  const groups = useLiveQuery(
+    () => db.groups.toArray().then((all) => all.filter((g) => g.words.some((w) => w.word === headword))),
+    [headword],
+  )
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  if (!groups) return null
+  return (
+    <section className="card">
+      <h3>相似词辨析</h3>
+      {groups.map((g) => (
+        <button key={g.id} className="group-link" onClick={() => nav(`/compare/${encodeURIComponent(g.id)}`)}>
+          <span lang="ja">{g.words.map((w) => w.word).join('・')}</span>
+          <span className="muted small">{g.theme}</span>
+        </button>
+      ))}
+      {!groups.length && <p className="muted small">还没有辨析组。AI 会找出与这个词意思相近或字形相似、容易混淆的词，并出对比填空题。</p>}
+      {err && <p className="error small">{err}</p>}
+      {!groups.length && (
+        <button
+          className="btn ghost block"
+          disabled={busy || !settings.apiKey}
+          onClick={async () => {
+            setBusy(true)
+            setErr('')
+            try {
+              const saved = await generateGroupFor({ headword, meaning })
+              if (!saved.length) setErr('没有找到合适的相似词')
+            } catch (e) {
+              setErr((e as Error).message)
+            } finally {
+              setBusy(false)
+            }
+          }}
+        >
+          {busy ? <Spinner label="生成中…" /> : '生成相似词辨析'}
+        </button>
+      )}
+    </section>
+  )
+}
 
 function Highlight({ text, mark }: { text: string; mark?: string }) {
   const i = mark ? text.indexOf(mark) : -1
@@ -128,6 +174,8 @@ export default function ItemPage() {
           </ul>
         </section>
       )}
+
+      {type === 'word' && <CompareSection headword={seed.headword} meaning={seed.meaning} />}
 
       <section className="card">
         <h3>

@@ -20,6 +20,14 @@ export interface Settings {
   ttsModel: string
   aiVoice: string
   ttsRate: number
+  /** Rate for reading a single sentence. */
+  sentenceRate: number
+  /** What tapping in the reader does. */
+  tapAction: 'lookup' | 'speak'
+  /** Include sentence-writing questions (graded by AI) in reviews. */
+  reviewWriting: boolean
+  /** New cards introduced per day. */
+  newPerDay: number
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -36,6 +44,10 @@ export const DEFAULT_SETTINGS: Settings = {
   ttsModel: 'gemini-3.8-flash-tts',
   aiVoice: 'Kore',
   ttsRate: 1,
+  sentenceRate: 1,
+  tapAction: 'lookup',
+  reviewWriting: true,
+  newPerDay: 20,
 }
 
 const STORAGE_KEY = 'jr-settings'

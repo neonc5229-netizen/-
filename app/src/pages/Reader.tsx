@@ -8,7 +8,7 @@ import { analysisKey, ensureAnalyzed, useAnalyses, useAnalysisStatus } from '../
 import { db } from '../lib/db'
 import { saveSettings, useSettings } from '../lib/settings'
 import { chunkSentence, furiganaParts, getTokenizer, loadTokenizer, type Chunk } from '../lib/tokenize'
-import { player, usePlayer } from '../lib/tts'
+import { player, speakOnce, stopOnce, useOnce, usePlayer } from '../lib/tts'
 import type { Analysis, Lang, Paragraph } from '../lib/types'
 
 const PAGE_CHARS = 900
@@ -126,6 +126,7 @@ export default function Reader() {
   const articleRef = useRef<HTMLDivElement>(null)
   const status = useAnalysisStatus()
   const playerState = usePlayer()
+  const onceState = useOnce()
   const lang = book?.lang
 
   const target = useMemo(() => {
@@ -205,7 +206,13 @@ export default function Reader() {
   }, [topSentence, savePosition])
 
   // Stop reading aloud when leaving the book.
-  useEffect(() => () => player.close(), [])
+  useEffect(
+    () => () => {
+      player.close()
+      stopOnce()
+    },
+    [],
+  )
   useEffect(() => {
     if (paras) player.updateParas(paras)
   }, [paras])
@@ -320,6 +327,15 @@ export default function Reader() {
       press.current = null
       return
     }
+    if (settings.tapAction === 'speak' && lang && paras) {
+      const el = (e.target as Element).closest<HTMLElement>('.sent')
+      if (!el) return
+      const key = `${el.dataset.p}:${el.dataset.s}`
+      if (onceState.key === key) return stopOnce()
+      setSel(null)
+      speakOnce(lang, paras[Number(el.dataset.p)].sentences[Number(el.dataset.s)], key, settings.sentenceRate)
+      return
+    }
     const w = (e.target as Element).closest<HTMLElement>('[data-c]')
     const sentEl = w?.closest<HTMLElement>('.sent')
     if (!w || !sentEl) {
@@ -387,6 +403,12 @@ export default function Reader() {
         }
       />
 
+      {settings.tapAction === 'speak' && (
+        <button className="mode-chip" onClick={() => saveSettings({ tapAction: 'lookup' })}>
+          <Icon name="play" size={14} filled /> 点句朗读模式（{settings.sentenceRate}×）· 点此切回查词
+        </button>
+      )}
+      {onceState.error && <div className="banner error">{onceState.error}</div>}
       {!settings.apiKey && (
         <Link to="/settings" className="banner">
           还没有填写 API Key，填写后才能显示翻译和释义 →
@@ -427,7 +449,7 @@ export default function Reader() {
                   selected={!!sel && sel.p === para.idx && sel.s === s}
                   selectedChunk={sel?.kind === 'word' && sel.p === para.idx && sel.s === s ? sel.c : null}
                   flash={!!flashTarget && flashTarget.p === para.idx && flashTarget.s === s}
-                  speaking={!!speakPos && speakPos.p === para.idx && speakPos.s === s}
+                  speaking={(!!speakPos && speakPos.p === para.idx && speakPos.s === s) || onceState.key === `${para.idx}:${s}`}
                   marked={isBookmarked(para.idx, s)}
                 />
               )
@@ -461,6 +483,7 @@ export default function Reader() {
             pending={status.isPending(analysisKey(lang, selText))}
             error={status.errorOf(analysisKey(lang, selText))}
             onShowSentence={() => setSel({ kind: 'sent', p: sel.p, s: sel.s })}
+            speakKey={`${sel.p}:${sel.s}`}
           />
         )}
         {sel && selText && lang && sel.kind === 'sent' && (
@@ -473,6 +496,7 @@ export default function Reader() {
             analysis={selAnalysis}
             pending={status.isPending(analysisKey(lang, selText))}
             error={status.errorOf(analysisKey(lang, selText))}
+            speakKey={`${sel.p}:${sel.s}`}
             bookmarked={isBookmarked(sel.p, sel.s)}
             onBookmark={() => toggleBookmark(sel.p, sel.s)}
             onListen={() => {
@@ -494,6 +518,17 @@ export default function Reader() {
               <button onClick={() => saveSettings({ fontSize: Math.max(14, settings.fontSize - 1) })}>A-</button>
               <span>{settings.fontSize}</span>
               <button onClick={() => saveSettings({ fontSize: Math.min(28, settings.fontSize + 1) })}>A+</button>
+            </div>
+          </div>
+          <div className="row">
+            <span>点击句子</span>
+            <div className="segmented small inline">
+              <button className={settings.tapAction === 'lookup' ? 'active' : ''} onClick={() => saveSettings({ tapAction: 'lookup' })}>
+                查词
+              </button>
+              <button className={settings.tapAction === 'speak' ? 'active' : ''} onClick={() => saveSettings({ tapAction: 'speak' })}>
+                朗读
+              </button>
             </div>
           </div>
           {lang === 'ja' && (
