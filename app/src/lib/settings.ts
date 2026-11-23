@@ -13,6 +13,13 @@ export interface Settings {
   minGrammarLevel: number
   furigana: boolean
   fontSize: number
+  /** Read-aloud engine: the device's built-in voices, or AI speech through the API. */
+  ttsEngine: 'system' | 'ai'
+  /** voiceURI of the chosen system voice ('' = default Japanese voice). */
+  systemVoice: string
+  ttsModel: string
+  aiVoice: string
+  ttsRate: number
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -24,6 +31,11 @@ export const DEFAULT_SETTINGS: Settings = {
   minGrammarLevel: 3,
   furigana: false,
   fontSize: 19,
+  ttsEngine: 'system',
+  systemVoice: '',
+  ttsModel: 'gemini-3.8-flash-tts',
+  aiVoice: 'Kore',
+  ttsRate: 1,
 }
 
 const STORAGE_KEY = 'jr-settings'

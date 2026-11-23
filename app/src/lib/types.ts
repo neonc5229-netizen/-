@@ -90,6 +90,13 @@ export interface Item {
   srs?: SrsState
 }
 
+export interface AudioClip {
+  /** `${model}|${voice}|${text}` */
+  key: string
+  blob: Blob
+  at: number
+}
+
 export interface Detail {
   /** `${type}:${key}` or `lookup:...` */
   id: string

@@ -25,6 +25,11 @@ const paths: Record<string, ReactNode> = {
   file: <path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8zM14 3v5h5" />,
   paste: <path d="M9 4h6v3H9zM8 5.5H6.5A1.5 1.5 0 005 7v12.5A1.5 1.5 0 006.5 21h11a1.5 1.5 0 001.5-1.5V7a1.5 1.5 0 00-1.5-1.5H16" />,
   close: <path d="M6 6l12 12M18 6L6 18" />,
+  headphones: <path d="M4 15v-3a8 8 0 0116 0v3M4 15a2 2 0 012-2h1v7H6a2 2 0 01-2-2zM20 15a2 2 0 00-2-2h-1v7h1a2 2 0 002-2z" />,
+  play: <path d="M8 5.5v13l11-6.5z" />,
+  pause: <path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" />,
+  skipBack: <path d="M6 6v12M18 6l-9 6 9 6z" />,
+  skipForward: <path d="M18 6v12M6 6l9 6-9 6z" />,
   search: (
     <>
       <circle cx="11" cy="11" r="6.5" />

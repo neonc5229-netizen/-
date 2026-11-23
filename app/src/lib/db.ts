@@ -1,5 +1,5 @@
 import Dexie, { type EntityTable } from 'dexie'
-import type { Analysis, Book, Detail, Item, Paragraph } from './types'
+import type { Analysis, AudioClip, Book, Detail, Item, Paragraph } from './types'
 
 export const db = new Dexie('japanese-reader') as Dexie & {
   books: EntityTable<Book, 'id'>
@@ -7,6 +7,7 @@ export const db = new Dexie('japanese-reader') as Dexie & {
   analyses: EntityTable<Analysis, 'key'>
   items: EntityTable<Item, 'id'>
   details: EntityTable<Detail, 'id'>
+  audio: EntityTable<AudioClip, 'key'>
 }
 
 db.version(1).stores({
@@ -15,6 +16,10 @@ db.version(1).stores({
   analyses: 'key',
   items: 'id, type, createdAt',
   details: 'id',
+})
+
+db.version(2).stores({
+  audio: 'key, at',
 })
 
 export async function deleteBook(bookId: number) {
